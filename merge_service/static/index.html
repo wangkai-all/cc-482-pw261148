@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Merge Service — Operations</title>
+<style>
+  /* Reference palette (validated): light + selected dark */
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+    --border: rgba(11,11,11,0.10); --hairline: #e1e0d9;
+    --series-1: #2a78d6; --series-2: #eb6834;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --success-text: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface-1: #1a1a19;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+      --border: rgba(255,255,255,0.10); --hairline: #2c2c2a;
+      --series-1: #3987e5; --series-2: #d95926;
+      --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+      --success-text: #0ca30c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px;
+  }
+  header { padding: 16px 24px 8px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 0 0 8px; }
+  .sub { color: var(--text-secondary); font-size: 12px; }
+  main { padding: 0 24px 40px; display: grid; gap: 16px; }
+  section.card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  /* stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .tile .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .tile .value { font-size: 24px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  /* tables */
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  th { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .empty { color: var(--text-muted); padding: 8px 0; }
+  /* status pills: icon + label, never color alone */
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+  .pill.good { color: var(--success-text); } .pill.good::before { background: var(--good); }
+  .pill.warn { color: var(--text-primary); } .pill.warn::before { background: var(--warning); }
+  .pill.serious { color: var(--serious); } .pill.serious::before { background: var(--serious); }
+  .pill.crit { color: var(--critical); } .pill.crit::before { background: var(--critical); }
+  .pill.mute { color: var(--text-secondary); } .pill.mute::before { background: var(--text-muted); }
+  /* segmented bar: live vs pending-delete bytes */
+  .bar { display: flex; gap: 2px; height: 14px; min-width: 120px; background: var(--hairline); border-radius: 4px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; }
+  .bar .live { background: var(--series-1); }
+  .bar .pending { background: var(--series-2); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  /* controls */
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+  }
+  button:hover { border-color: var(--series-1); }
+  button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+  input, select {
+    font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  }
+  #toast { position: fixed; bottom: 16px; right: 16px; background: var(--surface-1); border: 1px solid var(--border);
+           border-radius: 8px; padding: 10px 14px; font-size: 13px; display: none; max-width: 420px; }
+  #err { color: var(--critical); font-size: 12px; padding: 0 24px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>File Merge Service</h1>
+  <div class="sub" id="config-line">loading…</div>
+</header>
+<div id="err"></div>
+<main>
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>Controls</h2>
+    <div class="controls">
+      <label>partition <input id="p-name" value="tenant-a" size="10"></label>
+      <label>rows <input id="p-rows" type="number" value="20" min="1" size="5"></label>
+      <label>segments <input id="p-segs" type="number" value="3" min="1" size="3"></label>
+      <button id="b-append">Append</button>
+      <button id="b-query">Query</button>
+      <button id="b-longq">Simulate long query</button>
+      <span style="flex:1"></span>
+      <button id="b-plan">Generate plan</button>
+      <button id="b-merge" class="primary">Run merge</button>
+      <button id="b-gc">Run GC</button>
+      <button id="b-recover">Recover</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Partitions</h2>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--series-1)"></span>live bytes</span>
+      <span><span class="sw" style="background:var(--series-2)"></span>pending delete</span>
+    </div>
+    <div id="partitions"></div>
+  </section>
+
+  <section class="card">
+    <h2>Merge plans &amp; tasks</h2>
+    <div id="plans"></div>
+  </section>
+
+  <section class="card">
+    <h2>Locks</h2>
+    <div id="locks"></div>
+  </section>
+
+  <section class="card">
+    <h2>Snapshots</h2>
+    <div id="snapshots"></div>
+  </section>
+
+  <section class="card">
+    <h2>Cleanup results</h2>
+    <div id="cleanup"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function fmtBytes(n) {
+  if (n == null) return "—";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(1)) + " " + u[i];
+}
+function fmtAge(sec) {
+  if (sec == null) return "—";
+  if (sec < 60) return sec.toFixed(1) + "s";
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return m + "m " + String(s).padStart(2, "0") + "s";
+}
+function fmtTs(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString() : "—"; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+const STATE_PILL = {
+  COMMITTED: ["good", "✓ committed"], MERGING: ["warn", "▶ merging"], PREPARED: ["warn", "▶ prepared"],
+  RUNNING: ["warn", "▶ running"], PENDING: ["mute", "• pending"],
+  FAILED: ["crit", "✖ failed"], SKIPPED_LOCKED: ["serious", "⊘ locked"], STALE_ABORTED: ["serious", "⊘ stale"],
+  ALREADY_DONE: ["mute", "↺ already done"], RECOVERED: ["mute", "↺ recovered"],
+  PARTIAL: ["serious", "◐ partial"], EMPTY: ["mute", "• empty"],
+};
+function pill(state) {
+  const [cls, label] = STATE_PILL[state] || ["mute", "• " + String(state || "?").toLowerCase()];
+  return `<span class="pill ${cls}">${label}</span>`;
+}
+function tempPill(t) {
+  const cls = t === "hot" ? "crit" : t === "cold" ? "good" : "mute";
+  const icon = t === "hot" ? "▲" : t === "cold" ? "▼" : "•";
+  return `<span class="pill ${cls}">${icon} ${t}</span>`;
+}
+
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000);
+}
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json();
+  if (j.error) toast("Error: " + j.error); else toast(path + " → " + JSON.stringify(j).slice(0, 160));
+  refresh();
+}
+
+function renderTiles(s) {
+  const liveSegs = s.partitions.reduce((a, p) => a + p.segments, 0);
+  const liveBytes = s.partitions.reduce((a, p) => a + p.live_bytes, 0);
+  const pendingTasks = s.plans.filter(p => ["PENDING", "RUNNING"].includes(p.status)).length;
+  const tiles = [
+    ["Live segments", liveSegs], ["Live bytes", fmtBytes(liveBytes)],
+    ["Active plans", pendingTasks + " / " + s.plans.length],
+    ["Locks held", s.locks.length], ["Snapshots", s.snapshots.length],
+    ["Bytes reclaimed", fmtBytes(s.cleanup.total_bytes_reclaimed)],
+  ];
+  $("tiles").innerHTML = tiles.map(([l, v]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
+}
+
+function renderPartitions(s) {
+  if (!s.partitions.length) { $("partitions").innerHTML = `<div class="empty">No partitions yet — append some rows.</div>`; return; }
+  const maxTotal = Math.max(1, ...s.partitions.map(p => p.live_bytes + p.pending_delete_bytes));
+  const rows = s.partitions.map(p => {
+    const total = p.live_bytes + p.pending_delete_bytes;
+    const wTotal = Math.max(2, 100 * total / maxTotal);
+    const wLive = total ? 100 * p.live_bytes / total : 0;
+    const wPend = total ? 100 * p.pending_delete_bytes / total : 0;
+    const bar = `<div class="bar" style="width:${wTotal.toFixed(1)}%">
+      <span class="live" style="width:${wLive.toFixed(1)}%"></span>
+      ${wPend > 0 ? `<span class="pending" style="width:${wPend.toFixed(1)}%"></span>` : ""}
+    </div>`;
+    return `<tr><td class="mono">${esc(p.name)}</td><td>${tempPill(p.temperature)}</td>
+      <td class="num">${p.segments}</td><td class="num">${p.rows}</td>
+      <td class="num">${fmtBytes(p.live_bytes)}</td><td class="num">${fmtBytes(p.pending_delete_bytes)}</td>
+      <td class="num">${p.reads_in_window}</td><td class="num">${p.total_reads}</td>
+      <td>${bar}</td></tr>`;
+  }).join("");
+  $("partitions").innerHTML = `<table><thead><tr>
+    <th>partition</th><th>temp</th><th class="num">segments</th><th class="num">rows</th>
+    <th class="num">live</th><th class="num">pending</th>
+    <th class="num">reads (window)</th><th class="num">reads (total)</th><th>bytes</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPlans(s) {
+  if (!s.plans.length) { $("plans").innerHTML = `<div class="empty">No plans yet — generate one.</div>`; return; }
+  const blocks = s.plans.map(p => {
+    const tasks = (p.tasks || []).map(t => `<tr>
+      <td class="mono">${esc(t.task_id.slice(0, 12))}</td><td class="mono">${esc(t.partition)}</td>
+      <td>${pill(t.state)}</td><td class="num">${t.inputs.length}</td>
+      <td class="num">${fmtBytes(t.input_bytes)}</td><td class="num">${t.score}</td>
+      <td>${esc(t.reason || "")}${t.error ? ` — <span style="color:var(--critical)">${esc(t.error)}</span>` : ""}</td></tr>`).join("");
+    const skipped = (p.skipped || []).map(k =>
+      `<tr><td></td><td class="mono">${esc(k.partition)}</td><td>${pill("SKIPPED_LOCKED").replace("locked", "skipped")}</td>
+       <td></td><td></td><td></td><td>${esc(k.reason)}</td></tr>`).join("");
+    return `<h2 style="margin-top:12px"><span class="mono">${esc(p.id)}</span> &nbsp;${pill(p.status)}
+      <span class="sub"> · ${fmtTs(p.created_at)} · ${p.tasks.length} task(s)</span></h2>
+      ${(tasks || skipped) ? `<table><thead><tr><th>task</th><th>partition</th><th>state</th>
+      <th class="num">inputs</th><th class="num">bytes</th><th class="num">score</th><th>reason</th>
+      </tr></thead><tbody>${tasks}${skipped}</tbody></table>` : `<div class="empty">No tasks — nothing to merge.</div>`}`;
+  });
+  $("plans").innerHTML = blocks.join("");
+}
+
+function renderLocks(s) {
+  $("locks").innerHTML = s.locks.length
+    ? `<table><thead><tr><th>partition</th><th>holder</th><th class="num">age</th><th>state</th></tr></thead><tbody>` +
+      s.locks.map(l => `<tr><td class="mono">${esc(l.partition)}</td><td class="mono">${esc(l.holder)}</td>
+        <td class="num">${fmtAge(l.age_sec)}</td>
+        <td>${l.stale ? pill("STALE_ABORTED").replace("stale", "stale — breakable") : pill("RUNNING").replace("running", "held")}</td></tr>`).join("") +
+      `</tbody></table>`
+    : `<div class="empty">No active locks.</div>`;
+}
+
+function renderSnapshots(s) {
+  $("snapshots").innerHTML = s.snapshots.length
+    ? `<table><thead><tr><th>id</th><th class="num">age</th><th class="num">segments pinned</th><th>partitions</th></tr></thead><tbody>` +
+      s.snapshots.map(x => `<tr><td class="mono">${esc(x.id)}</td><td class="num">${fmtAge(x.age_sec)}</td>
+        <td class="num">${x.segments}</td><td class="mono">${esc(x.partitions.join(", "))}</td></tr>`).join("") +
+      `</tbody></table>`
+    : `<div class="empty">No active snapshots — queries pin one for the duration of each read.</div>`;
+}
+
+function renderCleanup(s) {
+  const c = s.cleanup;
+  if (!c.runs.length) { $("cleanup").innerHTML = `<div class="empty">No cleanup runs yet.</div>`; return; }
+  const runs = [...c.runs].reverse().map(r => `<tr>
+    <td>${fmtTs(r.ts)}</td><td class="num">${r.deleted.length}</td><td class="num">${fmtBytes(r.deleted_bytes)}</td>
+    <td class="num">${r.pending.length}</td>
+    <td class="mono">${esc(r.deleted.slice(0, 6).map(d => d.segment).join(", "))}${r.deleted.length > 6 ? " …" : ""}</td>
+    <td class="mono">${esc(r.pending.slice(0, 6).map(p => p.segment + " (" + p.reason + ")").join(", "))}${r.pending.length > 6 ? " …" : ""}</td>
+  </tr>`).join("");
+  $("cleanup").innerHTML = `<div class="sub" style="margin-bottom:8px">Total reclaimed: <b>${fmtBytes(c.total_bytes_reclaimed)}</b></div>
+    <table><thead><tr><th>run</th><th class="num">files deleted</th><th class="num">bytes</th>
+    <th class="num">pending</th><th>deleted</th><th>pending (why)</th></tr></thead><tbody>${runs}</tbody></table>`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    $("err").style.display = "none";
+    const c = s.config;
+    $("config-line").textContent =
+      `target ${fmtBytes(c.target_size_bytes)} · small < ${(c.small_file_ratio * 100).toFixed(0)}% · ` +
+      `hot ≥ ${c.hot_read_threshold} reads/${c.hot_window_sec}s · cold ≤ ${c.cold_read_threshold} · ` +
+      `updated ${new Date(s.now * 1000).toLocaleTimeString()}`;
+    renderTiles(s); renderPartitions(s); renderPlans(s); renderLocks(s); renderSnapshots(s); renderCleanup(s);
+  } catch (e) {
+    $("err").style.display = "block";
+    $("err").textContent = "status fetch failed: " + e;
+  }
+}
+
+$("b-append").onclick = () => post("/api/append", {partition: $("p-name").value, n: +$("p-rows").value, segments: +$("p-segs").value});
+$("b-query").onclick = () => post("/api/query", {partition: $("p-name").value});
+$("b-longq").onclick = () => post("/api/query", {partition: $("p-name").value, slow: true});
+$("b-plan").onclick = () => post("/api/plan");
+$("b-merge").onclick = () => post("/api/merge");
+$("b-gc").onclick = () => post("/api/gc");
+$("b-recover").onclick = () => post("/api/recover");
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
